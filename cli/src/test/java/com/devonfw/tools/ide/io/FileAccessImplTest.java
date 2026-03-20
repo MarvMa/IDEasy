@@ -1,9 +1,3 @@
-      assertThat(brokenLink.toRealPath()).isEqualTo(newSource);
-      assertThat(brokenLink.toRealPath()).isEqualTo(sourceDir);
-    assertThat(targetLink.toRealPath()).isEqualTo(newSourceDir);
-    assertThat(targetLink.toRealPath()).isEqualTo(sourceDir);
-    assertThat(fileAccess.toRealPath(link)).isEqualTo(tempDir.resolve("file"));
-      assertThat(link.resolveSibling(readPath).toRealPath(LinkOption.NOFOLLOW_LINKS)).isEqualTo(trueTarget);
 package com.devonfw.tools.ide.io;
 
 import static com.devonfw.tools.ide.io.FileAccessImpl.generatePermissionString;

@@ -1,5 +1,7 @@
 package com.devonfw.tools.ide.tool.docker;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -99,14 +101,11 @@ public class Docker extends GlobalToolCommandlet {
   @Override
   public VersionIdentifier getInstalledVersion() {
 
-    if (!isDockerInstalled()) {
-      LOG.error("Couldn't get installed version of " + this.getName());
-      return null;
-    }
-
     if (isRancherDesktopInstalled()) {
       return getRancherDesktopClientVersion();
-    } else {
+    }
+
+    if (isDockerInstalled()) {
       VersionIdentifier parsedVersion = switch (this.context.getSystemInfo().getOs()) {
         case WINDOWS -> getDockerDesktopVersionWindows();
         case LINUX -> getDockerDesktopVersionLinux();
@@ -119,6 +118,9 @@ public class Docker extends GlobalToolCommandlet {
 
       return parsedVersion;
     }
+
+    LOG.error("Couldn't get installed version of " + this.getName());
+    return null;
   }
 
   private VersionIdentifier getDockerDesktopVersionWindows() {
@@ -147,16 +149,16 @@ public class Docker extends GlobalToolCommandlet {
   @Override
   public String getInstalledEdition() {
 
-    if (!isDockerInstalled()) {
-      LOG.error("Couldn't get installed edition of {}", this.getName());
-      return null;
-    }
-
     if (isRancherDesktopInstalled()) {
       return "rancher";
-    } else {
+    }
+
+    if (isDockerInstalled()) {
       return "desktop";
     }
+
+    LOG.error("Couldn't get installed edition of {}", this.getName());
+    return null;
   }
 
   @Override
@@ -180,5 +182,28 @@ public class Docker extends GlobalToolCommandlet {
   public String getToolHelpArguments() {
 
     return "help";
+  }
+
+  @Override
+  protected Path getManagedInstallationPath(String edition, VersionIdentifier resolvedVersion) {
+
+    if (!this.context.getSystemInfo().isMac()) {
+      return null;
+    }
+    Path softwarePath = this.context.getSoftwarePath();
+    if (softwarePath == null) {
+      return null;
+    }
+    return softwarePath.resolve(this.tool);
+  }
+
+  @Override
+  protected Path getInstallationPath(String edition, VersionIdentifier resolvedVersion) {
+
+    Path managedInstallationPath = getManagedInstallationPath(edition, resolvedVersion);
+    if ((managedInstallationPath != null) && Files.isDirectory(managedInstallationPath)) {
+      return managedInstallationPath;
+    }
+    return super.getInstallationPath(edition, resolvedVersion);
   }
 }

@@ -13,6 +13,7 @@ import com.devonfw.tools.ide.cli.CliException;
 import com.devonfw.tools.ide.common.Tag;
 import com.devonfw.tools.ide.context.IdeContext;
 import com.devonfw.tools.ide.io.FileAccess;
+import com.devonfw.tools.ide.io.FileCopyMode;
 import com.devonfw.tools.ide.log.IdeLogLevel;
 import com.devonfw.tools.ide.process.ProcessContext;
 import com.devonfw.tools.ide.process.ProcessErrorHandling;
@@ -66,7 +67,7 @@ public abstract class GlobalToolCommandlet extends ToolCommandlet {
       NativePackageManager packageManager = pmCommand.packageManager();
       Path packageManagerPath = this.context.getPath().findBinary(Path.of(packageManager.getBinaryName()));
       if (packageManagerPath == null || !Files.exists(packageManagerPath)) {
-        LOG.debug("{} is not installed", packageManager.toString());
+        LOG.debug("{} is not installed", packageManager);
         continue; // Skip to the next package manager command
       }
 
@@ -99,8 +100,7 @@ public abstract class GlobalToolCommandlet extends ToolCommandlet {
     String bashPath = this.context.findBashRequired().toString();
     logPackageManagerCommands(pmCommand);
     for (String command : pmCommand.commands()) {
-      ProcessContext pc = this.context.newProcess().errorHandling(ProcessErrorHandling.LOG_WARNING).executable(bashPath)
-          .addArgs("-c", command);
+      ProcessContext pc = this.context.newProcess().errorHandling(ProcessErrorHandling.LOG_WARNING).executable(bashPath).addArgs("-c", command);
       int exitCode = pc.run();
       if (exitCode != 0) {
         LOG.warn("{} command did not execute successfully", command);
@@ -167,9 +167,15 @@ public abstract class GlobalToolCommandlet extends ToolCommandlet {
       if (executable == null) {
         throw new CliException("Could not find executable file in extracted archive " + target + " for tool " + this.tool + "!");
       }
+      if (this.context.getSystemInfo().isMac() && isMacAppExecutable(executable)) {
+        Path managedInstallationPath = getManagedInstallationPath(edition, resolvedVersion);
+        if (managedInstallationPath != null) {
+          executable = stageMacAppBundle(executable, managedInstallationPath);
+        }
+      }
     }
-    boolean keepExtractedMacAppBundle = (tmpDir != null) && this.context.getSystemInfo().isMac() && isMacAppExecutable(executable)
-        && executable.startsWith(tmpDir);
+    boolean keepExtractedMacAppBundle =
+        (tmpDir != null) && this.context.getSystemInfo().isMac() && isMacAppExecutable(executable) && executable.startsWith(tmpDir);
     ProcessContext pc = this.context.newProcess().errorHandling(ProcessErrorHandling.LOG_WARNING).executable(executable);
     int exitCode = pc.run(ProcessMode.BACKGROUND).getExitCode();
     if (tmpDir != null) {
@@ -190,11 +196,8 @@ public abstract class GlobalToolCommandlet extends ToolCommandlet {
     }
     installationPath = getInstallationPath(toolEdition.edition(), resolvedVersion);
     if (installationPath == null && this.context.getSystemInfo().isMac()) {
-      Path resolvedExecutable = resolveExecutableFromMacApp(executable);
-      if (resolvedExecutable != null) {
-        installationPath = resolvedExecutable.getParent();
-        LOG.info("Resolved installation path on MacOS: {}", installationPath);
-      }
+      installationPath = resolveMacInstallationPathFromExecutable(executable);
+      LOG.info("Resolved installation path on MacOS: {}", installationPath);
     }
     if (installationPath == null) {
       LOG.warn("Could not find binary {} on PATH after installation.", getBinaryName());
@@ -202,10 +205,65 @@ public abstract class GlobalToolCommandlet extends ToolCommandlet {
     return createToolInstallation(installationPath, resolvedVersion, true, pc, false);
   }
 
+  /**
+   * @param edition the installed edition.
+   * @param resolvedVersion the installed version.
+   * @return managed installation path for global tools or {@code null} to keep default behavior.
+   */
+  protected Path getManagedInstallationPath(String edition, VersionIdentifier resolvedVersion) {
+
+    return null;
+  }
+
+  private Path stageMacAppBundle(Path executable, Path managedInstallationPath) {
+
+    Path appBundle = findMacAppBundle(executable);
+    if (appBundle == null) {
+      return executable;
+    }
+    FileAccess fileAccess = this.context.getFileAccess();
+    fileAccess.delete(managedInstallationPath);
+    fileAccess.mkdirs(managedInstallationPath);
+    Path targetAppBundle = managedInstallationPath.resolve(appBundle.getFileName());
+    fileAccess.copy(appBundle, targetAppBundle, FileCopyMode.COPY_TREE_OVERRIDE_TREE);
+    Path managedExecutable = resolveExecutableFromMacApp(managedInstallationPath);
+    if (managedExecutable == null) {
+      throw new CliException("Could not resolve executable in staged MacOS app bundle " + targetAppBundle + " for tool " + this.tool + "!");
+    }
+    LOG.info("Staged MacOS app bundle to {}", targetAppBundle);
+    return managedExecutable;
+  }
+
+  private Path findMacAppBundle(Path executable) {
+
+    Path current = executable;
+    while (current != null) {
+      Path fileName = current.getFileName();
+      if ((fileName != null) && fileName.toString().endsWith(".app")) {
+        return current;
+      }
+      current = current.getParent();
+    }
+    return null;
+  }
+
+  private Path resolveMacInstallationPathFromExecutable(Path executable) {
+
+    Path appBundle = findMacAppBundle(executable);
+    if (appBundle == null) {
+      return (executable == null) ? null : executable.getParent();
+    }
+    Path parent = appBundle.getParent();
+    if (parent != null) {
+      return parent;
+    }
+    return appBundle;
+  }
+
   private boolean isMacAppBundlePath(Path executable) {
 
-    return (executable == null) || Files.isDirectory(executable)
-        || ((executable.getFileName() != null) && executable.getFileName().toString().endsWith(".app"));
+    return (executable == null) || Files.isDirectory(executable) || ((executable.getFileName() != null) && executable.getFileName().toString()
+        .endsWith(".app"));
   }
 
   private boolean isMacAppExecutable(Path executable) {
@@ -233,17 +291,30 @@ public abstract class GlobalToolCommandlet extends ToolCommandlet {
     }
     Path linkDir = getMacOsHelper().findLinkDir(appDir, getBinaryName());
     Path executable = this.context.getFileAccess().getBinPath(linkDir).resolve(getBinaryName());
-    if (Files.isExecutable(executable)) {
+    if (isExecutableFile(executable)) {
       return executable;
     }
     Path macOsDir = appDir.resolve(IdeContext.FOLDER_CONTENTS).resolve("MacOS");
     if (Files.isDirectory(macOsDir)) {
-      Path binaryFromMacOsDir = this.context.getFileAccess().findFirst(macOsDir, Files::isExecutable, false);
+      Path binaryFromMacOsDir = this.context.getFileAccess().findFirst(macOsDir, this::isExecutableFile, false);
       if (binaryFromMacOsDir != null) {
         return binaryFromMacOsDir;
       }
+      Path binaryFromMacOsDirWithoutExecFlag = this.context.getFileAccess().findFirst(macOsDir, Files::isRegularFile, false);
+      if (binaryFromMacOsDirWithoutExecFlag != null) {
+        // Ensure copied app binaries can be launched even if executable bits were dropped.
+        this.context.getFileAccess().makeExecutable(binaryFromMacOsDirWithoutExecFlag);
+        if (isExecutableFile(binaryFromMacOsDirWithoutExecFlag)) {
+          return binaryFromMacOsDirWithoutExecFlag;
+        }
+      }
     }
-    return this.context.getFileAccess().findFirst(appDir, Files::isExecutable, true);
+    return this.context.getFileAccess().findFirst(appDir, this::isExecutableFile, true);
+  }
+
+  private boolean isExecutableFile(Path path) {
+
+    return (path != null) && Files.isRegularFile(path) && Files.isExecutable(path);
   }
 
   /**
