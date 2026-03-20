@@ -157,6 +157,16 @@ public abstract class GlobalToolCommandlet extends ToolCommandlet {
       Path downloadBinaryPath = tmpDir.resolve(target.getFileName());
       fileAccess.extract(target, downloadBinaryPath);
       executable = fileAccess.findFirst(downloadBinaryPath, Files::isExecutable, false);
+      if (this.context.getSystemInfo().isMac() && isMacAppBundlePath(executable)) {
+        Path resolvedExecutable = resolveExecutableFromMacApp(downloadBinaryPath);
+        if (resolvedExecutable != null) {
+          executable = resolvedExecutable;
+          LOG.info("Resolved executable path on MacOS: {}", executable);
+        }
+      }
+      if (executable == null) {
+        throw new CliException("Could not find executable file in extracted archive " + target + " for tool " + this.tool + "!");
+      }
     }
     ProcessContext pc = this.context.newProcess().errorHandling(ProcessErrorHandling.LOG_WARNING).executable(executable);
     int exitCode = pc.run(ProcessMode.BACKGROUND).getExitCode();
@@ -173,10 +183,45 @@ public abstract class GlobalToolCommandlet extends ToolCommandlet {
       throw new CliException("Installation process for " + this.tool + " in version " + resolvedVersion + " failed with exit code " + exitCode + "!");
     }
     installationPath = getInstallationPath(toolEdition.edition(), resolvedVersion);
+    if (installationPath == null && this.context.getSystemInfo().isMac()) {
+      Path resolvedExecutable = resolveExecutableFromMacApp(executable);
+      if (resolvedExecutable != null) {
+        installationPath = resolvedExecutable.getParent();
+        LOG.info("Resolved installation path on MacOS: {}", installationPath);
+      }
+    }
     if (installationPath == null) {
       LOG.warn("Could not find binary {} on PATH after installation.", getBinaryName());
     }
     return createToolInstallation(installationPath, resolvedVersion, true, pc, false);
+  }
+
+  private boolean isMacAppBundlePath(Path executable) {
+
+    return (executable == null) || Files.isDirectory(executable)
+        || ((executable.getFileName() != null) && executable.getFileName().toString().endsWith(".app"));
+  }
+
+
+  private Path resolveExecutableFromMacApp(Path extractedRoot) {
+
+    Path appDir = getMacOsHelper().findAppDir(extractedRoot);
+    if (appDir == null) {
+      return null;
+    }
+    Path linkDir = getMacOsHelper().findLinkDir(appDir, getBinaryName());
+    Path executable = this.context.getFileAccess().getBinPath(linkDir).resolve(getBinaryName());
+    if (Files.isExecutable(executable)) {
+      return executable;
+    }
+    Path macOsDir = appDir.resolve(IdeContext.FOLDER_CONTENTS).resolve("MacOS");
+    if (Files.isDirectory(macOsDir)) {
+      Path binaryFromMacOsDir = this.context.getFileAccess().findFirst(macOsDir, Files::isExecutable, false);
+      if (binaryFromMacOsDir != null) {
+        return binaryFromMacOsDir;
+      }
+    }
+    return this.context.getFileAccess().findFirst(appDir, Files::isExecutable, true);
   }
 
   /**
@@ -215,6 +260,7 @@ public abstract class GlobalToolCommandlet extends ToolCommandlet {
     }
     return this.context.getFileAccess().getBinParentPath(binPath);
   }
+
 
   @Override
   public void uninstall() {

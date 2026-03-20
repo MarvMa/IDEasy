@@ -173,11 +173,6 @@ public class Docker extends GlobalToolCommandlet {
   private List<PackageManagerCommand> getPackageManagerCommandsUninstall() {
 
     List<PackageManagerCommand> pmCommands = new ArrayList<>();
-    pmCommands.add(
-        new PackageManagerCommand(NativePackageManager.ZYPPER, List.of("sudo zypper remove rancher-desktop")));
-    pmCommands.add(
-        new PackageManagerCommand(NativePackageManager.APT, List.of("sudo apt -y autoremove rancher-desktop")));
-
     return pmCommands;
   }
 
