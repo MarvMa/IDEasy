@@ -722,6 +722,9 @@ public class FileAccessImpl extends HttpDownloader implements FileAccess {
   public void extractZip(Path file, Path targetDir) {
 
     LOG.info("Extracting ZIP file {} to {}", file, targetDir);
+    if (this.context.getSystemInfo().isMac() && extractZipNativeMac(file, targetDir)) {
+      return;
+    }
     URI uri = URI.create("jar:" + file.toUri());
     try (FileSystem fs = FileSystems.newFileSystem(uri, FS_ENV)) {
       long size = 0;
@@ -735,6 +738,19 @@ public class FileAccessImpl extends HttpDownloader implements FileAccess {
       }
     } catch (IOException e) {
       throw new IllegalStateException("Failed to extract " + file + " to " + targetDir, e);
+    }
+  }
+
+  private boolean extractZipNativeMac(Path file, Path targetDir) {
+
+    try {
+      mkdirs(targetDir);
+      this.context.newProcess().executable("ditto").addArgs("-x", "-k", file.toAbsolutePath().toString(), targetDir.toAbsolutePath().toString()).run();
+      LOG.debug("Extracted ZIP file {} to {} via native macOS ditto", file, targetDir);
+      return true;
+    } catch (RuntimeException e) {
+      LOG.warn("Native macOS extraction via ditto failed for {}. Falling back to Java ZIP extraction.", file, e);
+      return false;
     }
   }
 

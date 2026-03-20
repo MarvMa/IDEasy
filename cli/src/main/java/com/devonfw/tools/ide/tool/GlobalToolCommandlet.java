@@ -168,10 +168,16 @@ public abstract class GlobalToolCommandlet extends ToolCommandlet {
         throw new CliException("Could not find executable file in extracted archive " + target + " for tool " + this.tool + "!");
       }
     }
+    boolean keepExtractedMacAppBundle = (tmpDir != null) && this.context.getSystemInfo().isMac() && isMacAppExecutable(executable)
+        && executable.startsWith(tmpDir);
     ProcessContext pc = this.context.newProcess().errorHandling(ProcessErrorHandling.LOG_WARNING).executable(executable);
     int exitCode = pc.run(ProcessMode.BACKGROUND).getExitCode();
     if (tmpDir != null) {
-      fileAccess.delete(tmpDir);
+      if (keepExtractedMacAppBundle) {
+        LOG.info("Keeping extracted MacOS app bundle at {} to avoid runtime framework resolution issues.", tmpDir);
+      } else {
+        fileAccess.delete(tmpDir);
+      }
     }
     if (exitCode == 0) {
       IdeLogLevel.SUCCESS.log(LOG, "Installation process for {} in version {} has started", this.tool, resolvedVersion);
@@ -200,6 +206,22 @@ public abstract class GlobalToolCommandlet extends ToolCommandlet {
 
     return (executable == null) || Files.isDirectory(executable)
         || ((executable.getFileName() != null) && executable.getFileName().toString().endsWith(".app"));
+  }
+
+  private boolean isMacAppExecutable(Path executable) {
+
+    if (executable == null) {
+      return false;
+    }
+    Path current = executable;
+    while (current != null) {
+      Path fileName = current.getFileName();
+      if ((fileName != null) && fileName.toString().endsWith(".app")) {
+        return true;
+      }
+      current = current.getParent();
+    }
+    return false;
   }
 
 
